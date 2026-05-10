@@ -1,0 +1,35 @@
+# Fat image: intentionally uses a full Python base image and extra tools.
+# Expected result: bigger image, but very straightforward to build/debug.
+FROM python:3.9
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+# Extra runtime/debug tools are intentionally kept here to make this a "fat" image.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    ca-certificates \
+    curl \
+    git \
+    wget \
+    vim \
+    less \
+    iputils-ping \
+    libglib2.0-0 \
+    libsm6 \
+    libxrender1 \
+    libxext6 \
+    libgl1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt ./requirements.txt
+RUN pip install --upgrade pip && pip install -r requirements.txt
+
+COPY inference.py ./inference.py
+COPY model.pt ./model.pt
+COPY imagenet_classes.txt ./imagenet_classes.txt
+
+ENTRYPOINT ["python", "inference.py"]

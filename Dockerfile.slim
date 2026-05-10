@@ -1,0 +1,25 @@
+# Slim image: multi-stage build.
+# Stage 1 installs Python dependencies into /install.
+FROM python:3.9-slim AS builder
+
+ENV PIP_NO_CACHE_DIR=1
+WORKDIR /build
+
+COPY requirements.txt ./requirements.txt
+RUN pip install --upgrade pip \
+    && pip install --prefix=/install -r requirements.txt
+
+# Stage 2 contains only the runtime files and installed Python packages.
+FROM python:3.9-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+COPY --from=builder /install /usr/local
+COPY inference.py ./inference.py
+COPY model.pt ./model.pt
+COPY imagenet_classes.txt ./imagenet_classes.txt
+
+ENTRYPOINT ["python", "inference.py"]
