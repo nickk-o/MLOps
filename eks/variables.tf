@@ -25,7 +25,7 @@ variable "cluster_version" {
 variable "node_instance_types" {
   description = "Instance types for both node groups"
   type        = list(string)
-  default     = ["t3.micro"]
+  default     = ["t3.medium"]
 }
 
 variable "use_remote_state" {
