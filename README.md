@@ -121,7 +121,7 @@ The EKS module in [eks/main.tf](/terraform/eks/main.tf):
 
 Both node groups currently use:
 
-- `t3.micro`
+- `t3.medium`
 - `min_size = 1`
 - `desired_size = 1`
 - `max_size = 2`
@@ -177,7 +177,7 @@ Important defaults from the current project:
 - VPC CIDR: `10.0.0.0/16`
 - public subnets: `10.0.1.0/24`, `10.0.2.0/24`
 - private subnets: `10.0.11.0/24`, `10.0.12.0/24`
-- node instance type: `t3.micro`
+- node instance type: `t3.medium`
 
 ## Deployment Options
 
