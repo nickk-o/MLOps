@@ -46,7 +46,7 @@ resource "kubernetes_manifest" "namespaces_appset" {
             revision = var.app_repo_branch
             directories = [
               {
-                path = "namespace/*"
+                path = "namespaces/*"
               }
             ]
           }
@@ -70,6 +70,61 @@ resource "kubernetes_manifest" "namespaces_appset" {
           destination = {
             server    = "https://kubernetes.default.svc"
             namespace = "{{path.basename}}"
+          }
+          syncPolicy = {
+            automated = {
+              prune    = true
+              selfHeal = true
+            }
+            syncOptions = ["CreateNamespace=true"]
+          }
+          revisionHistoryLimit = 2
+        }
+      }
+    }
+  }
+
+  depends_on = [
+    helm_release.argocd
+  ]
+}
+
+resource "kubernetes_manifest" "root_application_appset" {
+  manifest = {
+    apiVersion = "argoproj.io/v1alpha1"
+    kind       = "ApplicationSet"
+    metadata = {
+      name      = "root-application-appset"
+      namespace = var.argocd_namespace
+    }
+    spec = {
+      generators = [
+        {
+          list = {
+            elements = [
+              {
+                name = "goit-argo-root"
+                path = "."
+              }
+            ]
+          }
+        }
+      ]
+      template = {
+        metadata = {
+          name      = "{{name}}"
+          namespace = var.argocd_namespace
+        }
+        spec = {
+          project = "default"
+          source = {
+            repoURL        = var.app_repo_url
+            targetRevision = var.app_repo_branch
+            path           = "{{path}}"
+          }
+          destination = {
+            server    = "https://kubernetes.default.svc"
+            namespace = var.argocd_namespace
           }
           syncPolicy = {
             automated = {

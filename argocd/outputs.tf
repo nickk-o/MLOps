@@ -28,7 +28,17 @@ output "port_forward_command" {
   value       = "kubectl port-forward svc/argocd-server -n ${var.argocd_namespace} 8080:80"
 }
 
-output "applicationset_name" {
-  description = "ApplicationSet name"
+output "bootstrap_application_name" {
+  description = "Argo CD bootstrap Application name"
+  value       = "mlflow"
+}
+
+output "namespaces_appset_name" {
+  description = "ApplicationSet that syncs namespace directories from the GitOps repository"
   value       = kubernetes_manifest.namespaces_appset.manifest.metadata.name
+}
+
+output "root_application_appset_name" {
+  description = "ApplicationSet that syncs root application.yaml from the GitOps repository"
+  value       = kubernetes_manifest.root_application_appset.manifest.metadata.name
 }

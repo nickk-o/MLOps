@@ -1,53 +1,30 @@
-# Lesson 5-6: AWS VPC and EKS with Terraform Modules
+# Terraform Infrastructure
 
-This repository contains a modular Terraform project for creating:
+Terraform repository for the AWS and Kubernetes infrastructure used in the
+project. The repository provisions the base network, the EKS cluster, and the
+Argo CD installation that drives GitOps deployments from a separate manifests
+repository.
 
-- an AWS VPC with the official module `terraform-aws-modules/vpc/aws`
-- an AWS EKS cluster with the official module `terraform-aws-modules/eks/aws`
-- two EKS managed node groups for different workloads:
-  - `cpu`
-  - `gpu`
+## Repositories
 
-The project is structured as a root stack plus two local modules:
+This solution uses two repositories:
 
-- `vpc/` for networking
-- `eks/` for the Kubernetes cluster
+- Infrastructure repository: `https://github.com/nickk-o/MLOps/tree/lesson-7`
+- GitOps repository: `https://github.com/nickk-o/goit-argo.git`
 
-## Homework Goal
+This repository owns AWS infrastructure and the Argo CD installation.
+`goit-argo` owns the application and namespace manifests that Argo CD
+synchronizes from GitHub.
 
-The homework requires:
+## Project Scope
 
-- using a modular Terraform structure
-- creating a VPC with the official AWS VPC module
-- creating an EKS cluster with the official AWS EKS module
-- creating two scalable node groups for CPU and GPU workloads
-- working with `terraform_remote_state`, outputs, and providers
-- connecting to the cluster with `kubectl` after `terraform apply`
+The repository contains three infrastructure areas:
 
-This project covers those topics and includes:
-
-- a root `main.tf` that calls both local modules
-- separate `vpc/` and `eks/` directories with their own Terraform files
-- EKS node labels for workload separation
-- `terraform_remote_state` support in `eks/data.tf`
-
-## Important Cost Warning
-
-When working with AWS, unused resources can generate charges.
-
-- Always destroy resources after verification with `terraform destroy`
-- You may keep the S3 bucket that stores Terraform state if you still need it
-- AWS S3 storage cost is approximately `$0.023 per GB / month`
-
-Recommended destroy order:
-
-1. Destroy EKS
-2. Destroy VPC
-3. Keep or remove the S3 state bucket only if you are sure it is no longer needed
+- `vpc/` creates the AWS VPC and subnets
+- `eks/` creates the EKS cluster and worker node groups
+- `argocd/` installs Argo CD into the cluster and configures ApplicationSets
 
 ## Project Structure
-
-Current repository structure:
 
 ```text
 terraform/
@@ -63,78 +40,91 @@ terraform/
 │   ├── output.tf
 │   ├── terraform.tf
 │   └── variables.tf
-└── eks/
+├── eks/
+│   ├── backend.tf
+│   ├── data.tf
+│   ├── main.tf
+│   ├── output.tf
+│   ├── terraform.tf
+│   └── variables.tf
+└── argocd/
     ├── backend.tf
     ├── data.tf
     ├── main.tf
-    ├── output.tf
+    ├── outputs.tf
+    ├── provider.tf
     ├── terraform.tf
-    └── variables.tf
+    ├── variables.tf
+    └── values/
+        └── argocd-values.yaml
 ```
 
-## What Each Part Does
+## Infrastructure Components
 
-### Root Module
+### VPC
 
-The root module in [main.tf](terraform/main.tf) does the orchestration:
+`vpc/` uses the official `terraform-aws-modules/vpc/aws` module to create:
 
-- configures the AWS provider
-- calls `module "vpc"` from `./vpc`
-- calls `module "eks"` from `./eks`
-- passes VPC outputs into the EKS module
+- the VPC
+- public and private subnets
+- DNS support and hostnames
+- a NAT gateway
+- Kubernetes-compatible subnet tags
 
-The root module also defines:
+### EKS
 
-- shared input variables in [variables.tf](/terraform/variables.tf)
-- root outputs in [output.tf](/terraform/output.tf)
-- required provider versions in [terraform.tf](/terraform/terraform.tf)
-- the S3 backend in [backend.tf](/terraform/backend.tf)
+`eks/` uses the official `terraform-aws-modules/eks/aws` module to create:
 
-### `vpc/` Module
+- the EKS control plane
+- public cluster endpoint access
+- two managed node groups
+- node labels for workload separation
 
-The VPC module in [vpc/main.tf](/terraform/vpc/main.tf):
+Current workload groups:
 
-- uses `terraform-aws-modules/vpc/aws`
-- creates the VPC, public subnets, and private subnets
-- enables DNS support and DNS hostnames
-- creates a single NAT gateway
-- adds subnet tags required for AWS load balancers in Kubernetes
+- `cpu`
+- `gpu`
 
-The module exports:
+### Argo CD
 
-- `vpc_id`
-- `public_subnets`
-- `private_subnets`
-- `azs`
+`argocd/` installs Argo CD with the Helm provider as a `helm_release` in the
+`infra-tools` namespace.
 
-### `eks/` Module
+The module reads the EKS cluster connection data from remote state and then:
 
-The EKS module in [eks/main.tf](/terraform/eks/main.tf):
+- creates the `infra-tools` namespace
+- installs the `argo-cd` Helm chart
+- applies custom values from `values/argocd-values.yaml`
+- enables the ApplicationSet controller
+- creates ApplicationSets that point Argo CD to the separate GitOps repository
 
-- uses `terraform-aws-modules/eks/aws`
-- creates an EKS cluster
-- enables public cluster endpoint access
-- enables cluster creator admin permissions
-- creates two managed node groups:
-  - `cpu`
-  - `gpu`
+Current GitOps source:
 
-Both node groups currently use:
+```hcl
+app_repo_url    = "https://github.com/nickk-o/goit-argo.git"
+app_repo_branch = "main"
+```
 
-- `t3.medium`
-- `min_size = 1`
-- `desired_size = 1`
-- `max_size = 2`
+The Argo CD configuration in `argocd/main.tf` creates:
 
-Node labels:
+- `namespaces-appset` for `namespaces/*`
+- `root-application-appset` for the repository root
 
-- CPU group: `workload=cpu`, `nodegroup=cpu`
-- GPU group: `workload=gpu`, `nodegroup=gpu`
+This allows Argo CD to discover:
 
-## `terraform_remote_state` 
+- namespace manifests from the `goit-argo` repository
+- the root `application.yaml` that defines the MLflow Helm deployment
 
-- when `use_remote_state = true`, the EKS module reads VPC outputs from the VPC state stored in S3
-- when `use_remote_state = false`, the EKS module accepts VPC values directly from the root module
+## Argo CD Values
+
+`argocd/values/argocd-values.yaml` contains the chart overrides required by the
+task:
+
+- `server.service.type: ClusterIP`
+- `server.extraArgs`
+- RBAC configuration
+- reconciliation timeout
+- `applicationSet.enabled: true`
 
 ## Prerequisites
 
@@ -143,8 +133,8 @@ Before deployment, make sure you have:
 - Terraform `>= 1.5.0`
 - AWS CLI configured
 - `kubectl` installed
-- access to an AWS account
-- an existing S3 bucket for Terraform state
+- access to the target AWS account
+- an S3 bucket for Terraform state
 
 Check AWS access:
 
@@ -152,125 +142,159 @@ Check AWS access:
 aws sts get-caller-identity
 ```
 
-Current backend bucket names in this project:
+## State And Defaults
+
+Current backend bucket:
 
 ```text
 mlops-tfstate-mykola
 ```
 
-State keys used by the project:
-
-- root: `root/terraform.tfstate`
-- VPC: `vpc/terraform.tfstate`
-- EKS: `eks/terraform.tfstate`
-
-If you use another bucket name, update the backend configuration files before running `terraform init`.
-
-## Key Variables
-
-Important defaults from the current project:
+Current project defaults:
 
 - AWS region: `us-east-1`
 - project name: `mlops-mykola`
-- cluster name: `goit-mykola`
-- Kubernetes version: `1.33`
-- VPC CIDR: `10.0.0.0/16`
-- public subnets: `10.0.1.0/24`, `10.0.2.0/24`
-- private subnets: `10.0.11.0/24`, `10.0.12.0/24`
-- node instance type: `t3.medium`
+- EKS cluster name: `goit-mykola`
+- Argo CD namespace: `infra-tools`
+- GitOps branch: `main`
 
-## Deployment Options
+## Deployment Order
 
-There are two reasonable ways to use this repository.
-
-### Option 1: Deploy Root Stack
-
-Use the root stack when you want one entry point that runs both modules:
+### 1. Deploy VPC
 
 ```bash
+cd ~/terraform/vpc
 terraform init
-terraform fmt -recursive
-terraform validate
 terraform plan
 terraform apply
 ```
 
-### Option 2: Deploy Modules Separately
-
-Use separate module deployment when you want to work with the `terraform_remote_state` approach more explicitly.
-
-Deploy VPC first:
+### 2. Deploy EKS
 
 ```bash
-cd vpc
+cd ~/terraform/eks
 terraform init
-terraform fmt -recursive
-terraform validate
 terraform plan
 terraform apply
 ```
 
-Then deploy EKS:
+### 3. Push GitOps Manifests
+
+Run this in the separate `goit-argo` repository:
 
 ```bash
-cd ../eks
-terraform init
-terraform fmt -recursive
-terraform validate
+git add -A
+git commit -m "Add GitOps manifests"
+git push origin main
+```
+
+### 4. Deploy Argo CD
+
+```bash
+cd ~/terraform/argocd
+terraform init -reconfigure
 terraform plan
 terraform apply
 ```
 
-If you deploy `eks/` separately and want it to read VPC outputs from remote state, ensure:
+## Verification
 
-- `use_remote_state = true`
-- the remote state bucket, key, and region match the VPC backend
-
-## Access the Cluster
-
-After `terraform apply`, configure `kubectl`:
+### Verify Cluster Access
 
 ```bash
-aws eks --region us-east-1 update-kubeconfig \
-  --name goit-mykola \
-```
-
-Check the cluster:
-
-```bash
+aws eks update-kubeconfig --region us-east-1 --name goit-mykola
 kubectl get nodes
-kubectl get nodes -L workload,nodegroup
+```
+
+### Verify Argo CD
+
+```bash
+kubectl get pods -n infra-tools
+kubectl get applicationsets.argoproj.io -n infra-tools
+kubectl get applications -n infra-tools
 ```
 
 Expected result:
 
-- the EKS cluster is reachable
-- two managed node groups are present
-- node labels show `cpu` and `gpu` workloads
+- several pods with the `argocd-` prefix
+- `namespaces-appset` present
+- `root-application-appset` present
+- Argo CD Applications created from the GitOps repository
 
-## Destroy Resources
-
-Destroy EKS first:
-
-```bash
-cd eks
-terraform destroy
-```
-
-Then destroy VPC:
+### Verify Workload Deployment
 
 ```bash
-cd ../vpc
-terraform destroy
+kubectl get pods -n application
+kubectl get svc -n application
 ```
 
-If you used the root stack as a single entry point, destroy from the root:
+Expected result:
+
+- the MLflow workload is deployed in `application`
+- the `mlflow` service is present
+
+## Access To Argo CD UI
+
+Get the initial admin password:
 
 ```bash
-terraform destroy
+kubectl -n infra-tools get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d && echo
 ```
 
-Be careful with backend storage:
+Forward the Argo CD server locally:
 
-- do not remove the S3 state bucket unless you intentionally want to delete stored state
-- if the bucket is deleted, future Terraform runs may need backend reconfiguration
+```bash
+kubectl port-forward svc/argocd-server -n infra-tools 8080:80
+```
+
+Open:
+
+```text
+http://localhost:8080
+```
+
+## Access To MLflow
+
+Forward the service locally:
+
+```bash
+kubectl port-forward svc/mlflow -n application 8081:80
+```
+
+Open:
+
+```text
+http://localhost:8081
+```
+
+## Acceptance Criteria Coverage
+
+This repository covers the infrastructure side of the assignment:
+
+- Argo CD is deployed via Terraform as a `helm_release`
+- `argocd-values.yaml` contains the required service, RBAC, extra arguments,
+  and timeout settings
+- Argo CD is configured to watch the separate GitOps repository
+- Argo CD runs in the `infra-tools` namespace
+
+The GitOps repository covers the application side:
+
+- `application.yaml` defines the Helm-based application deployment
+- Argo CD synchronizes the application from GitHub
+- the target namespace receives the deployed workload
+
+## Destroy Order
+
+Destroy in reverse dependency order:
+
+1. `argocd/`
+2. `eks/`
+3. `vpc/`
+
+Commands:
+
+```bash
+cd ~/terraform/argocd && terraform destroy
+cd ~/terraform/eks && terraform destroy
+cd ~/terraform/vpc && terraform destroy
+```
