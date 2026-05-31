@@ -1,9 +1,9 @@
 # Terraform Infrastructure
 
 Terraform repository for the AWS and Kubernetes infrastructure used in the
-project. The repository provisions the base network, the EKS cluster, and the
-Argo CD installation that drives GitOps deployments from a separate manifests
-repository.
+project. This repository provisions the base network, the EKS cluster, and the
+Argo CD installation. Application workloads are synchronized by Argo CD from a
+separate GitOps repository.
 
 ## Repositories
 
@@ -12,9 +12,18 @@ This solution uses two repositories:
 - Infrastructure repository: `https://github.com/nickk-o/MLOps/tree/lesson-7`
 - GitOps repository: `https://github.com/nickk-o/goit-argo.git`
 
-This repository owns AWS infrastructure and the Argo CD installation.
-`goit-argo` owns the application and namespace manifests that Argo CD
-synchronizes from GitHub.
+This repository owns:
+
+- AWS infrastructure
+- EKS
+- Argo CD bootstrap
+- the experiment runner in `experiments/`
+
+The `goit-argo` repository owns:
+
+- namespace manifests
+- Argo CD `Application` manifests for MLflow, MinIO, PostgreSQL, PushGateway,
+  Prometheus, and Grafana
 
 ## Project Scope
 
@@ -24,39 +33,41 @@ The repository contains three infrastructure areas:
 - `eks/` creates the EKS cluster and worker node groups
 - `argocd/` installs Argo CD into the cluster and configures ApplicationSets
 
+This branch also contains the experiment runner and local output directory for
+the MLflow assignment:
+
+- `experiments/train_and_push.py`
+- `experiments/requirements.txt`
+- `best_model/`
+
 ## Project Structure
 
 ```text
 terraform/
 ├── README.md
 ├── backend.tf
+├── best_model/
+├── experiments/
+│   ├── requirements.txt
+│   └── train_and_push.py
 ├── main.tf
 ├── output.tf
 ├── terraform.tf
 ├── variables.tf
 ├── vpc/
-│   ├── backend.tf
-│   ├── main.tf
-│   ├── output.tf
-│   ├── terraform.tf
-│   └── variables.tf
 ├── eks/
+├── argocd/
 │   ├── backend.tf
 │   ├── data.tf
 │   ├── main.tf
-│   ├── output.tf
+│   ├── outputs.tf
+│   ├── provider.tf
 │   ├── terraform.tf
-│   └── variables.tf
-└── argocd/
-    ├── backend.tf
-    ├── data.tf
-    ├── main.tf
-    ├── outputs.tf
-    ├── provider.tf
-    ├── terraform.tf
-    ├── variables.tf
-    └── values/
-        └── argocd-values.yaml
+│   ├── variables.tf
+│   └── values/
+│       └── argocd-values.yaml
+└── docs/
+    └── screenshots/
 ```
 
 ## Infrastructure Components
@@ -87,8 +98,7 @@ Current workload groups:
 
 ### Argo CD
 
-`argocd/` installs Argo CD with the Helm provider as a `helm_release` in the
-`infra-tools` namespace.
+`argocd/` installs Argo CD in the `infra-tools` namespace.
 
 The module reads the EKS cluster connection data from remote state and then:
 
@@ -96,7 +106,8 @@ The module reads the EKS cluster connection data from remote state and then:
 - installs the `argo-cd` Helm chart
 - applies custom values from `values/argocd-values.yaml`
 - enables the ApplicationSet controller
-- creates ApplicationSets that point Argo CD to the separate GitOps repository
+- creates `namespaces-appset`
+- creates `root-application-appset`
 
 Current GitOps source:
 
@@ -113,12 +124,44 @@ The Argo CD configuration in `argocd/main.tf` creates:
 This allows Argo CD to discover:
 
 - namespace manifests from the `goit-argo` repository
-- the root `application.yaml` that defines the MLflow Helm deployment
+- root-level `Application` manifests from the `goit-argo` repository
+
+## GitOps Workloads
+
+The GitOps repository contains the manifests required by the assignment:
+
+- `application.yaml` for MLflow Tracking Server
+- `minio.yaml` for MinIO with bucket `mlflow-artifacts`
+- `postgres.yaml` for PostgreSQL with database `mlflow`
+- `pushgateway.yaml` for Prometheus PushGateway
+- `prometheus-operator.yaml` for Prometheus and Grafana
+- `namespaces/application/ns.yaml`
+- `namespaces/infra-tools/ns.yaml`
+- `namespaces/monitoring/ns.yaml`
+
+## MLflow Experiment Runner
+
+The experiment runner is implemented in:
+
+- [train_and_push.py](experiments/train_and_push.py)
+- [requirements.txt](experiments/requirements.txt)
+
+The script:
+
+- loads the Iris dataset
+- trains multiple models with different `learning_rate` and `epochs`
+- logs parameters to MLflow
+- logs metrics to MLflow
+- stores the model as an artifact in MinIO through MLflow
+- pushes `mlflow_accuracy` and `mlflow_loss` to PushGateway with the `run_id`
+  label
+- selects the best run by `accuracy`, then by lower `loss`
+- copies the best model artifacts into `best_model/<run_id>/`
 
 ## Argo CD Values
 
 `argocd/values/argocd-values.yaml` contains the chart overrides required by the
-task:
+project:
 
 - `server.service.type: ClusterIP`
 - `server.extraArgs`
@@ -163,7 +206,7 @@ Current project defaults:
 ### 1. Deploy VPC
 
 ```bash
-cd ~/terraform/vpc
+cd vpc
 terraform init
 terraform plan
 terraform apply
@@ -172,7 +215,7 @@ terraform apply
 ### 2. Deploy EKS
 
 ```bash
-cd ~/terraform/eks
+cd ../eks
 terraform init
 terraform plan
 terraform apply
@@ -184,14 +227,14 @@ Run this in the separate `goit-argo` repository:
 
 ```bash
 git add -A
-git commit -m "Add GitOps manifests"
+git commit -m "Update GitOps manifests"
 git push origin main
 ```
 
 ### 4. Deploy Argo CD
 
 ```bash
-cd ~/terraform/argocd
+cd ../argocd
 terraform init -reconfigure
 terraform plan
 terraform apply
@@ -219,9 +262,9 @@ Expected result:
 - several pods with the `argocd-` prefix
 - `namespaces-appset` present
 - `root-application-appset` present
-- Argo CD Applications created from the GitOps repository
+- Argo CD applications created from the GitOps repository
 
-### Verify Workload Deployment
+### Verify Application Workloads
 
 ```bash
 kubectl get pods -n application
@@ -230,8 +273,26 @@ kubectl get svc -n application
 
 Expected result:
 
-- the MLflow workload is deployed in `application`
-- the `mlflow` service is present
+- `mlflow` is running
+- `minio` is running
+- `mlflow-postgres-postgresql-0` is running
+- the `mlflow` service is present on port `5000`
+- the `minio` service is present on port `9000`
+- the `mlflow-postgres-postgresql` service is present on port `5432`
+
+### Verify Monitoring Workloads
+
+```bash
+kubectl get pods -n monitoring
+kubectl get svc -n monitoring
+```
+
+Expected result:
+
+- `monitoring-grafana` is running
+- `prometheus-monitoring-kube-prometheus-prometheus-0` is running
+- `pushgateway` is running
+- the `pushgateway` service is present on port `9091`
 
 ## Access To Argo CD UI
 
@@ -258,30 +319,122 @@ http://localhost:8080
 Forward the service locally:
 
 ```bash
-kubectl port-forward svc/mlflow -n application 8081:80
+kubectl port-forward svc/mlflow 5000:5000 -n application
 ```
 
 Open:
 
 ```text
-http://localhost:8081
+http://localhost:5000
 ```
+
+## Access To MinIO
+
+Forward the service locally:
+
+```bash
+kubectl port-forward svc/minio 9000:9000 -n application
+```
+
+Health check:
+
+```bash
+curl http://localhost:9000/minio/health/live
+```
+
+## Access To PushGateway
+
+Forward the service locally:
+
+```bash
+kubectl port-forward svc/pushgateway 9091:9091 -n monitoring
+```
+
+Health check:
+
+```bash
+curl http://localhost:9091/-/healthy
+```
+
+Cluster service address:
+
+```text
+http://pushgateway.monitoring.svc.cluster.local:9091
+```
+
+## Access To Grafana
+
+Forward the service locally:
+
+```bash
+kubectl port-forward svc/monitoring-grafana 3000:80 -n monitoring
+```
+
+Open:
+
+```text
+http://localhost:3000
+```
+
+## Run The Experiment Script
+
+Create or reuse the virtual environment:
+
+```bash
+python3 -m venv experiments/.venv
+experiments/.venv/bin/pip install -r experiments/requirements.txt
+```
+
+Forward the required services:
+
+```bash
+kubectl port-forward svc/mlflow 5000:5000 -n application
+kubectl port-forward svc/minio 9000:9000 -n application
+kubectl port-forward svc/pushgateway 9091:9091 -n monitoring
+```
+
+Run the script from the repository root:
+
+```bash
+experiments/.venv/bin/python experiments/train_and_push.py
+```
+
+After a successful run:
+
+- MLflow runs are visible in the MLflow UI
+- model artifacts are stored in MinIO
+- the best model is copied into `best_model/<run_id>/`
+
+## View Metrics In Grafana
+
+Open Grafana and use `Explore` with the Prometheus datasource.
+
+Queries for this assignment:
+
+```text
+mlflow_accuracy
+mlflow_loss
+```
+
+You can use:
+
+- graph view for the metric series
+- table view for `run_id`, metric values, and push timestamps
 
 ## Acceptance Criteria Coverage
 
-This repository covers the infrastructure side of the assignment:
+This repository and the connected GitOps repository cover the task
+requirements:
 
-- Argo CD is deployed via Terraform as a `helm_release`
-- `argocd-values.yaml` contains the required service, RBAC, extra arguments,
-  and timeout settings
-- Argo CD is configured to watch the separate GitOps repository
-- Argo CD runs in the `infra-tools` namespace
-
-The GitOps repository covers the application side:
-
-- `application.yaml` defines the Helm-based application deployment
-- Argo CD synchronizes the application from GitHub
-- the target namespace receives the deployed workload
+- Argo CD is deployed declaratively from Terraform
+- MLflow, MinIO, PostgreSQL, PushGateway, Prometheus, and Grafana are deployed
+  through Argo CD
+- MLflow tracks parameters, metrics, and artifacts
+- PushGateway receives `mlflow_accuracy` and `mlflow_loss`
+- Grafana can query those metrics through Prometheus
+- the best model is copied into `best_model/`
+- the repository contains instructions to deploy, verify, port-forward, and
+  run the experiment
 
 ## Destroy Order
 
@@ -294,7 +447,7 @@ Destroy in reverse dependency order:
 Commands:
 
 ```bash
-cd ~/terraform/argocd && terraform destroy
-cd ~/terraform/eks && terraform destroy
-cd ~/terraform/vpc && terraform destroy
+cd argocd && terraform destroy
+cd ../eks && terraform destroy
+cd ../vpc && terraform destroy
 ```
