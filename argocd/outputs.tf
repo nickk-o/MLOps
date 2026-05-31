@@ -35,10 +35,10 @@ output "bootstrap_application_name" {
 
 output "namespaces_appset_name" {
   description = "ApplicationSet that syncs namespace directories from the GitOps repository"
-  value       = kubernetes_manifest.namespaces_appset.manifest.metadata.name
+  value       = "namespaces-appset"
 }
 
 output "root_application_appset_name" {
   description = "ApplicationSet that syncs root application.yaml from the GitOps repository"
-  value       = kubernetes_manifest.root_application_appset.manifest.metadata.name
+  value       = "root-application-appset"
 }
